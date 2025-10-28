@@ -19,6 +19,8 @@ inflatie = st.number_input("Inflatievoet (%)", value=2.0, step=0.1)
 looptijd = st.number_input("Looptijd (jaren)", value=10, step=1)
 restwaarde = st.number_input("Restwaarde na looptijd (€)", value=550000.0, step=10000.0)
 discontovoet = st.number_input("Discontovoet (%)", value=6.0, step=0.1)
+waardegroei = st.number_input("Waardegroei vastgoed (%)", value=2.0, step=0.1)
+
 
 # --- Financiering ---
 st.header("💰 Financiering")
@@ -29,7 +31,7 @@ duur_lening = st.number_input("Looptijd lening (jaren)", value=15, step=1)
 if st.button("Bereken en genereer rapport"):
     pdf_pad, resultaten = genereer_pdf(
         aankoop, kosten, huur, inflatie, looptijd, restwaarde,
-        discontovoet, lening, rente_lening, duur_lening
+        discontovoet, lening, rente_lening, duur_lening, waardegroei
     )
 
     st.success(f"📊 Netto contante waarde (DCF): **€ {resultaten['dcf']:,.2f}**")
