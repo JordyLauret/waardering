@@ -1,89 +1,113 @@
+import matplotlib.pyplot as plt
+import numpy as np
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 from reportlab.lib import colors
 from datetime import date
-import matplotlib.pyplot as plt
-import numpy as np
 
-def genereer_pdf(waarde, discontovoet, looptijd, dcf):
-    """Genereert een eenvoudig PDF-rapport met DCF-berekening, uitleg en grafiek."""
-
-    bestand = "DCF_Rapport_Balanz.pdf"
+def genereer_pdf(aankoop, kosten, huur, inflatie, looptijd, restwaarde, discontovoet,
+                 lening, rente_lening, duur_lening):
+    bestand = "Vastgoed_DCF_Balanz.pdf"
     doc = SimpleDocTemplate(bestand, pagesize=A4)
     styles = getSampleStyleSheet()
-    elementen = []
-
-    titel_style = ParagraphStyle('Titel', parent=styles['Title'], textColor=colors.HexColor("#2E4053"))
     normaal = styles["Normal"]
+    titel = ParagraphStyle('Titel', parent=styles['Title'], textColor=colors.HexColor("#2E4053"))
 
-    # Titel
-    elementen.append(Paragraph("💶 Waarderingsrapport – Eenvoudig DCF-model", titel_style))
+    # --- Berekeningen ---
+    i = inflatie / 100
+    r = discontovoet / 100
+    rl = rente_lening / 100
+
+    totale_investering = aankoop + kosten
+    eigen_inbreng = totale_investering - lening
+
+    # jaarlijkse annuïteit lening
+    if lening > 0 and duur_lening > 0:
+        annuiteit = lening * (rl * (1 + rl)**duur_lening) / ((1 + rl)**duur_lening - 1)
+    else:
+        annuiteit = 0
+
+    restschuld = lening
+    jaren = np.arange(1, looptijd + 1)
+    huur_per_jaar, netto_cf, pv_cf = [], [], []
+
+    for t in jaren:
+        huur_t = huur * (1 + i)**(t - 1)
+        if t <= duur_lening:
+            rente_t = restschuld * rl
+            kapitaal_t = annuiteit - rente_t
+            restschuld -= kapitaal_t
+            aflossing_totaal = annuiteit
+        else:
+            aflossing_totaal = 0
+        cf = huur_t - aflossing_totaal
+        pv = cf / ((1 + r)**t)
+        huur_per_jaar.append(huur_t)
+        netto_cf.append(cf)
+        pv_cf.append(pv)
+
+    pv_rest = restwaarde / ((1 + r)**looptijd)
+    dcf = sum(pv_cf) + pv_rest - eigen_inbreng
+    roi = (dcf / eigen_inbreng) * 100 if eigen_inbreng > 0 else 0
+
+    # --- PDF-opbouw ---
+    elementen = []
+    elementen.append(Paragraph("🏢 Vastgoedwaardering via DCF-model", titel))
     elementen.append(Spacer(1, 12))
     elementen.append(Paragraph(f"Datum: {date.today().strftime('%d/%m/%Y')}", normaal))
     elementen.append(Spacer(1, 24))
 
-    # Parameters
     data = [
         ["Parameter", "Waarde"],
-        ["Jaarlijkse kasstroom (€)", f"{waarde:,.2f}"],
-        ["Discontovoet (%)", f"{discontovoet:.2f}%"],
-        ["Looptijd (jaren)", str(looptijd)],
+        ["Aankoopprijs", f"€ {aankoop:,.0f}"],
+        ["Bijkomende kosten", f"€ {kosten:,.0f}"],
+        ["Totale investering", f"€ {totale_investering:,.0f}"],
+        ["Lening", f"€ {lening:,.0f}"],
+        ["Eigen inbreng", f"€ {eigen_inbreng:,.0f}"],
+        ["Discontovoet", f"{discontovoet:.1f}%"],
+        ["Rente lening", f"{rente_lening:.1f}%"],
+        ["Inflatie", f"{inflatie:.1f}%"],
+        ["Looptijd analyse", f"{looptijd} jaren"],
     ]
-    tabel = Table(data, hAlign="LEFT", colWidths=[8*cm, 6*cm])
+    tabel = Table(data, colWidths=[8*cm, 6*cm])
     tabel.setStyle(TableStyle([
         ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#2E4053")),
         ("TEXTCOLOR", (0,0), (-1,0), colors.white),
-        ("ALIGN", (0,0), (-1,-1), "LEFT"),
-        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
-        ("BOTTOMPADDING", (0,0), (-1,0), 8),
-        ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
+        ("GRID", (0,0), (-1,-1), 0.5, colors.grey)
     ]))
-    elementen.append(Paragraph("### Ingevoerde parameters", normaal))
     elementen.append(tabel)
-    elementen.append(Spacer(1, 24))
-
-    # Resultaat
-    elementen.append(Paragraph(f"De berekende **contante waarde (DCF)** bedraagt <b>€ {dcf:,.2f}</b>.", normaal))
+    elementen.append(Spacer(1, 18))
+    elementen.append(Paragraph(f"<b>Netto contante waarde:</b> € {dcf:,.0f}", normaal))
+    elementen.append(Paragraph(f"<b>Gemiddeld rendement:</b> {roi:.2f}%", normaal))
     elementen.append(Spacer(1, 18))
 
-    # --- Grafiek genereren ---
-    jaren = np.arange(1, looptijd + 1)
-    r = discontovoet / 100
-    contante_waarden = [waarde / ((1 + r) ** j) for j in jaren]
-
+    # --- Grafiek kasstromen ---
     plt.figure(figsize=(5,3))
-    plt.bar(jaren, [waarde]*looptijd, color="#AED6F1", label="Kasstroom per jaar (€)")
-    plt.bar(jaren, contante_waarden, color="#2E86C1", label="Contante waarde (€)")
+    plt.bar(jaren, huur_per_jaar, color="#AED6F1", label="Bruto huur")
+    plt.bar(jaren, netto_cf, color="#2E86C1", label="Netto kasstroom")
     plt.xlabel("Jaar")
-    plt.ylabel("Waarde (€)")
-    plt.title("Visualisatie van de DCF-berekening")
+    plt.ylabel("€")
+    plt.title("Jaarlijkse kasstromen")
     plt.legend()
     plt.tight_layout()
-    plt.savefig("grafiek_dcf.png", dpi=120)
+    plt.savefig("kasstromen.png", dpi=120)
     plt.close()
 
-    elementen.append(Paragraph("### Visualisatie van kasstromen", normaal))
-    elementen.append(Image("grafiek_dcf.png", width=14*cm, height=8*cm))
-    elementen.append(Spacer(1, 24))
+    elementen.append(Image("kasstromen.png", width=14*cm, height=7*cm))
+    elementen.append(Spacer(1, 18))
 
-    # Uitleg over DCF
-    uitleg_tekst = """
-    <b>Wat is een DCF-waardering?</b><br/><br/>
-    De <i>Discounted Cash Flow-methode (DCF)</i> is een veelgebruikte manier om de waarde van een onderneming te bepalen.  
-    Ze vertrekt vanuit het idee dat een bedrijf vandaag zoveel waard is als de som van zijn toekomstige kasstromen –  
-    maar dan herleid naar hun waarde van vandaag.<br/><br/>
-    Elke euro die het bedrijf in de toekomst zal genereren, wordt verdisconteerd met een discontovoet.  
-    Die discontovoet weerspiegelt het rendement dat investeerders verwachten als vergoeding voor het risico dat ze nemen.<br/><br/>
-    De DCF-methode is een fundamentele waarderingstechniek omdat ze de focus legt op de <b>reële prestaties en kasstromen</b>  
-    van een onderneming, in plaats van enkel op marktvergelijkingen of boekhoudkundige cijfers.<br/><br/>
-    Deze berekening in dit rapport is een vereenvoudigde versie, bedoeld om inzicht te geven in de principes van waardering  
-    en het effect van rendement en tijd op de bedrijfswaarde.
+    uitleg = """
+    <b>Over dit model</b><br/><br/>
+    Deze berekening gebruikt de <i>Discounted Cash Flow-methode (DCF)</i> om te bepalen wat de toekomstige huurinkomsten
+    en de restwaarde van het gebouw vandaag waard zijn.  
+    Wanneer er een lening wordt aangegaan, worden de jaarlijkse aflossingen in mindering gebracht
+    om de netto-kasstroom te berekenen.  
+    Zo zie je hoe financiering, inflatie en rendement samen de waarde van het vastgoed beïnvloeden.
     """
-
-    elementen.append(Paragraph(uitleg_tekst, normaal))
-    elementen.append(Spacer(1, 24))
-
+    elementen.append(Paragraph(uitleg, normaal))
     doc.build(elementen)
-    return bestand
+
+    resultaten = {"dcf": dcf, "roi": roi}
+    return bestand, resultaten
