@@ -8,7 +8,7 @@ from reportlab.lib import colors
 from datetime import date
 
 def genereer_pdf(aankoop, kosten, huur, inflatie, looptijd, restwaarde, discontovoet,
-                 lening, rente_lening, duur_lening):
+                 lening, rente_lening, duur_lening, waardegroei):
 
     bestand = "Vastgoed_DCF_Balanz.pdf"
     doc = SimpleDocTemplate(bestand, pagesize=landscape(A4), leftMargin=1.5*cm, rightMargin=1.5*cm)
@@ -23,6 +23,7 @@ def genereer_pdf(aankoop, kosten, huur, inflatie, looptijd, restwaarde, disconto
     inflatie_m = (1 + inflatie/100)**(1/12) - 1
     discontovoet_m = (1 + discontovoet/100)**(1/12) - 1
     rente_m = (1 + rente_lening/100)**(1/12) - 1
+    waardegroei_m = (1 + waardegroei/100)**(1/12) - 1
 
     maanden = int(looptijd * 12)
     duur_lening_m = int(duur_lening * 12)
@@ -35,9 +36,10 @@ def genereer_pdf(aankoop, kosten, huur, inflatie, looptijd, restwaarde, disconto
 
     restschuld = lening
     maanden_lijst = np.arange(1, maanden + 1)
-    huur_maand, netto_cf, pv_cf, restschuld_lijst = [], [], [], []
+    huur_maand, leninglasten, netto_cf, pv_cf = [], [], [], []
 
     huur_m0 = huur / 12  # maandelijkse huur start
+    restwaarde_t = restwaarde * ((1 + waardegroei_m)**maanden)
 
     for t in maanden_lijst:
         huur_t = huur_m0 * (1 + inflatie_m)**(t - 1)
@@ -51,18 +53,18 @@ def genereer_pdf(aankoop, kosten, huur, inflatie, looptijd, restwaarde, disconto
 
         cf = huur_t - leninglast_t
         pv = cf / ((1 + discontovoet_m)**t)
-        huur_maand.append(huur_t)
-        netto_cf.append(cf)
+        huur_maand.append(round(huur_t))
+        leninglasten.append(round(leninglast_t))
+        netto_cf.append(round(cf))
         pv_cf.append(pv)
-        restschuld_lijst.append(restschuld)
 
-    pv_rest = restwaarde / ((1 + discontovoet_m)**maanden)
+    pv_rest = restwaarde_t / ((1 + discontovoet_m)**maanden)
     dcf = sum(pv_cf) + pv_rest - eigen_inbreng
     roi = (dcf / eigen_inbreng) * 100 if eigen_inbreng > 0 else 0
 
     # --- PDF-opbouw ---
     elementen = []
-    elementen.append(Paragraph("🏢 Vastgoedwaardering via DCF-model (maandelijks)", titel))
+    elementen.append(Paragraph("🏢 Vastgoedwaardering via DCF-model (maandelijks, met waardegroei)", titel))
     elementen.append(Spacer(1, 10))
     elementen.append(Paragraph(f"Datum: {date.today().strftime('%d/%m/%Y')}", normaal))
     elementen.append(Spacer(1, 20))
@@ -77,6 +79,7 @@ def genereer_pdf(aankoop, kosten, huur, inflatie, looptijd, restwaarde, disconto
         ["Discontovoet (jaarlijks)", f"{discontovoet:.1f}%"],
         ["Rente lening (jaarlijks)", f"{rente_lening:.1f}%"],
         ["Inflatie", f"{inflatie:.1f}%"],
+        ["Waardegroei vastgoed", f"{waardegroei:.1f}%"],
         ["Looptijd analyse", f"{looptijd} jaar"],
     ]
     tabel = Table(data, colWidths=[8*cm, 8*cm])
@@ -106,15 +109,15 @@ def genereer_pdf(aankoop, kosten, huur, inflatie, looptijd, restwaarde, disconto
     elementen.append(Image("kasstromen_maandelijks.png", width=18*cm, height=8*cm))
     elementen.append(Spacer(1, 20))
 
-    # --- Samenvattende tabel (elke 12 maanden) ---
-    jaar_data = [["Jaar", "Gemiddelde huur/maand", "Netto CF/maand", "PV maand"]]
+    # --- Samenvattende tabel per jaar ---
+    jaar_data = [["Jaar", "Gem. huur/mnd", "Gem. leninglast", "Gem. netto CF/mnd"]]
     for j in range(1, looptijd + 1):
         start, eind = (j-1)*12, j*12
         jaar_data.append([
             j,
             f"€ {np.mean(huur_maand[start:eind]):,.0f}",
+            f"€ {np.mean(leninglasten[start:eind]):,.0f}",
             f"€ {np.mean(netto_cf[start:eind]):,.0f}",
-            f"€ {np.mean(pv_cf[start:eind]):,.0f}",
         ])
 
     jaar_tabel = Table(jaar_data, colWidths=[3*cm, 5*cm, 5*cm, 5*cm])
@@ -129,9 +132,14 @@ def genereer_pdf(aankoop, kosten, huur, inflatie, looptijd, restwaarde, disconto
 
     uitleg = """
     <b>Over dit model</b><br/><br/>
-    Deze berekening werkt op maandbasis en gebruikt de <i>Discounted Cash Flow (DCF)</i>-methode
-    om te bepalen wat de toekomstige huurinkomsten en restwaarde vandaag waard zijn.  
-    De grafiek toont hoe de maandelijkse kasstroom evolueert, rekening houdend met inflatie, aflossingen en rente.
+    Deze berekening werkt op maandbasis en houdt rekening met:
+    <ul>
+      <li>de inflatie van huurinkomsten,</li>
+      <li>de maandelijkse leningaflossing en rente,</li>
+      <li>en de waardestijging van het vastgoed zelf.</li>
+    </ul>
+    De restwaarde van het gebouw groeit jaarlijks mee met de waardegroei en wordt verdisconteerd
+    naar vandaag met de gekozen discontovoet.
     """
     elementen.append(Paragraph(uitleg, normaal))
     doc.build(elementen)
